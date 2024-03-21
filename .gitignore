@@ -1,0 +1,10 @@
+__pycache__/
+Протоколы ПТД/
+dist/
+build/
+*.xls
+*.xlsx
+*.xlsm
+*.txt
+*.spec
+for_me.py
