@@ -7,4 +7,5 @@ build/
 *.xlsm
 *.txt
 *.spec
+*.ipynb
 for_me.py

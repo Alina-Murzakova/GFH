@@ -5,7 +5,7 @@ import re
 import numpy as np
 import datetime as dt
 import math
-from function import parser
+from function import parser, clear_data_object
 
 directory = r'C:\Users\Alina\Desktop\Работа\Попластовый план\Протоколы ПТД'
 if os.path.exists(directory + r'\all.xlsx'):
@@ -29,6 +29,7 @@ name_columns = pd.MultiIndex.from_tuples(
 
 
 df = parser(directory)
+df = clear_data_object(df)
 
 # df.columns = name_columns
 
