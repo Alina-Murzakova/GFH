@@ -5,9 +5,12 @@ import re
 import numpy as np
 import datetime as dt
 import math
-from function import parser, clear_data_object
+from function import parser, clear_data_object, unifier
 
 directory = r'C:\Users\Alina\Desktop\Работа\Попластовый план\Протоколы ПТД'
+
+file_unifier = r'C:\Users\Alina\Desktop\Работа\Попластовый план\Унификатор.xlsx'
+
 if os.path.exists(directory + r'\all.xlsx'):
     os.remove(directory + r'\all.xlsx')
 
@@ -30,6 +33,7 @@ name_columns = pd.MultiIndex.from_tuples(
 
 df = parser(directory)
 df = clear_data_object(df)
+df = unifier(df, file_unifier)
 
 # df.columns = name_columns
 

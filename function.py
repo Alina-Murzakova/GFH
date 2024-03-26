@@ -137,7 +137,7 @@ def parser(directory):
         if df_file.iloc[0][3] == "":
             df_file.iloc[0][3] = 'Залежь'
 
-        df_file.columns = df_file.iloc[0]
+        df_file.columns = df_file.iloc[0] # присвоение строки заголовкой
         df_file = df_file.drop(0, axis=0)
 
         # Приведение заголовков к однотипным
@@ -158,15 +158,16 @@ def parser(directory):
             if Flag == 0:
                 df_file.rename(columns={col_name: 'Удалить'}, inplace=True)
 
+        # удаление не найденных/ненужных параметров
         if 'Удалить' in list(df_file):
             del df_file['Удалить']
 
-
+        # удаление ненужных строк
         df_file = df_file.replace('', np.nan)
         df_file = df_file.dropna(subset=['Средняя глубина залегания кровли', 'Абсолютная отметка ВНК', 'Площадь нефтегазоносности', 'Коэффициент пористости'], axis=0, how='all') # thresh=
         df_file = df_file[df_file['Средняя глубина залегания кровли'] != "м"]
 
-        df_file.insert(0, 'Месторождение', field)
+        df_file.insert(0, 'Месторождение', field) # вставка столбца с названием месторождения
 
         df_file['Параметры'].replace(list_extra_words, np.nan, inplace=True) # удаление лишних слов в столбце
 
@@ -196,6 +197,7 @@ def clear_data_object(df):
     df['Пласт'] = df['Пласт'].replace(to_replace=[r'((.*\n*){1,2})пл\.\s*', r'.*ласт\s*', r'.бъект\s*'], value='', regex=True) # , r'.*\n*.*\,n*\s*'     r'.ласт\s*'   , r'.*пл.',    (.*\n*)(.+)(?:,)(\n*)
     df['Временный столбец'] = df['Пласт'].copy()
     df['Временный столбец1'] = df['Пласт'].copy()
+    # Выделение пластов
     df['Пласт'] = df['Пласт'].str.extract(r'(^\s*[а-яА-Я]+\s*[0-9]*(?:[/\-|\+]*[\s]*[АаБбчЮ0-9]*)+)', expand=True)
     df['Пласт'] = df['Пласт'].str.replace(r'Ю$', '', regex=True)
     df['Пласт'] = df['Пласт'].str.replace(r'[\n\s]', '', regex=True)
@@ -205,12 +207,57 @@ def clear_data_object(df):
     # df['Пласт'] = df['Пласт'].replace(to_replace=[r'[а - яА - Я] +\s * [0 - 9] + [АаБб0 - 9 /\-\+]+'], value=r'[а - яА - Я] +\s * [0 - 9] + [АаБб0 - 9 /\-\+]+\s', regex=True)
     # '^\s*[а-яА-Я]+[\s]*[0-9]*[АаБб0-9/\-\+ ]+'
     # '^\s*[а-яА-Я]+\s*[0-9]+([/\-|\+]*[а-яА-Я0-9]+)+'
+    # Выделение районов
     df['Район'] = df['Район'].astype(str)
     df['Район'] = df['Район'].str.replace("nan", str(''))
     df['Район'] = np.where(df['Район'] == '', df['Временный столбец'], df['Район'])
 
-    del df['Параметры']
+    # del df['Параметры']
     return df
+
+def unifier(df, file_unifier):
+    """
+    Прогон пластов через унификатор
+    :param df:
+    :param file_unifier:
+    :return:
+    """
+    sheets = ['Пласты_ПТД', 'Унификатор']
+    columns = ['Пласт', 'Объект']
+
+
+    for i in range(len(sheets)):
+        new_objects = pd.DataFrame()
+        df_unifier = pd.read_excel(file_unifier, sheet_name=sheets[i])  # Датафрейм унификатор
+        df_unifier = df_unifier.dropna(subset=['Месторождение\nУнифицированное название', 'Пласт\nУнифицированное название'])
+        num_row = df_unifier.shape[0]
+
+        df['Сцепка'] = df['Месторождение'] + "_" + df['Пласт']
+        print(list(df_unifier))
+
+        df['Месторождение'] = np.where(df['Сцепка'].isin(df_unifier['Сцепка']),
+                                     pd.merge(df, df_unifier[['Сцепка', 'Месторождение\nУнифицированное название']],
+                                              on='Сцепка', how='left')['Месторождение\nУнифицированное название'], df['Месторождение'])
+        # df['Сцепка'] = np.where(df['Сцепка'] == (df_unifier['Сцепка']), df_unifier['Месторождение\nУнифицированное название'], df['Месторождение'])
+        df[columns[i]] = np.where(df['Сцепка'].isin(df_unifier['Сцепка']),
+                                       pd.merge(df, df_unifier[['Сцепка', 'Пласт\nУнифицированное название']],
+                                                on='Сцепка', how='left')['Пласт\nУнифицированное название'], df['Пласт'])
+
+        new_objects['Сцепка'] = df[~df['Сцепка'].isin(df_unifier['Сцепка'])]['Сцепка']
+
+        if not new_objects.empty:
+            new_objects = new_objects.drop_duplicates()
+            new_objects[['Месторождение', 'Пласт']] = new_objects['Сцепка'].str.split('_', n=1, expand=True)
+            # df_unifier = pd.concat([df_unifier, new_objects])
+
+            with pd.ExcelWriter(file_unifier, mode='a', if_sheet_exists='overlay') as writer:
+                new_objects.to_excel(writer, sheet_name=sheets[i], index=False, header=False, startrow=num_row+1, startcol=1)
+
+    df.insert(1, 'Объект', df.pop('Объект'))
+
+    return df
+
+
 
 # Для меня
 # VNK = df_file.index[df_file.iloc[:, col_param[0]].str.contains('ВНК') == True].tolist()
