@@ -3,9 +3,12 @@ import glob
 import os
 import re
 import numpy as np
-import datetime as dt
-# import timeit
 import time
+import warnings
+from openpyxl import load_workbook
+
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 
 def parser(directory):
     """
@@ -14,23 +17,22 @@ def parser(directory):
     :param directory: каталог с файлами ГФХ
     :return: df - датафрейм со всеми ГФХ в исходном виде
     """
-
-    list_sheet_GPH = ["1", "Табл.1", "Т.1", "Т1", "Табл.1 "] # возможные названия страниц с ГФХ
-
+    list_sheet_GPH = ["1", "Табл.1", "Т.1", "Т1", "Табл.1 ", "Табл. 1", "1г"]  # возможные названия страниц с ГФХ
     list_extra_words = ['Продуктивные пласты', 'Продуктивный пласт, залежь', 'Пласты']
 
     # Словарь для приведения всех заголовков в одному формату
     dict_columns = {'Параметры': ['Параметры', 'Показатели', 'Пар-ры'],
-                    'Пласт': ['Пласт'],
+                    'Пласт': [r'Пласт\s*$'],
                     'Район': ['Район'],
                     'Залежь': ['Залежь'],
-                    'Средняя глубина залегания кровли': ['Средняя глубина залегания', 'Абсолютная отметка кровли'],
+                    'Средняя глубина залегания кровли': ['Средняя глубина залегания', 'Абсолютная отметка кровли',
+                                                         'Глубина залегания кровли (абс. отм.)', 'Глубина залегания'],
                     'Абсолютная отметка ВНК': ['ВНК'],
                     'Абсолютная отметка ГНК': ['ГНК'],
                     'Абсолютная отметка ГВК': ['ГВК'],
                     'Тип залежи': ['ип залежи'],
                     'Тип коллектора': ['Тип коллектора'],
-                    'Площадь нефтеносности': ['Площадь нефте'],
+                    'Площадь нефтеносности': ['Площадь нефте', 'Площадь газо/нефтеносности'],
                     'Средняя общая толщина': ['Средняя общая толщина'],
                     'Средняя эффективная нефтенасыщенная толщина': [r'нефтенасыщ.*толщина'],
                     'Средняя эффективная газонасыщенная толщина': [r'газонас.*толщина'],
@@ -59,7 +61,7 @@ def parser(directory):
                     'Потенциальное содержание стабильного конденсата в газе (С5+)': ['Потенциальное'],
                     'Содержание сероводорода': ['ероводород'],
                     'Вязкость газа в пластовых условиях': ['Вязкость газа'],
-                    'Плотность газа в пластовых условиях': ['Плотность газа'],
+                    'Плотность газа в пластовых условиях': [r'Плотность газа\s*(?!.*воздух)'],
                     'Коэффициент сверхсжимаемости газа': ['сверхсжимаемости'],
                     'Вязкость воды в пластовых условиях': ['Вязкость воды'],
                     'Плотность воды в поверхностных условиях': ['Плотность воды'],  # ?
@@ -72,23 +74,25 @@ def parser(directory):
                     'Коэффициент вытеснения (газом)': [r'^Коэффициент вытес.*газом.*'],
                     'Коэффициент продуктивности': ['продуктивности'],
                     'Коэффициенты фильтрационных сопротивлений:': ['фильтрационных'],
-                    'А': [r'^А$', r'^А$'],  # ?
-                    'В': [r'^В$', r'^B$']}  # ?
+                    'А': [r'^A$', r'^А$'],  # ?
+                    'В': [r'^B$', r'^В$']}  # ?
 
     # считываем все файлы в папке
     files_xls = [item for item in
-                 glob.glob(directory+r'\*{}'.format('.xls'))]
+                 glob.glob(directory + r'\*{}'.format('.xls'))]
     files_xlsx = [item for item in
-                  glob.glob(directory+r'\*{}'.format('.xlsx'))]
-    files = files_xls + files_xlsx  # где-то xls, где-то xlsx
-
+                  glob.glob(directory + r'\*{}'.format('.xlsx'))]
+    files_xlsm = [item for item in
+                  glob.glob(directory + r'\*{}'.format('.xlsm'))]
+    files = files_xls + files_xlsx + files_xlsm  # где-то xls, где-то xlsx
     os.chdir(directory)
 
     # пустой датафрейм для сбора всех ГФХ
     df = pd.DataFrame(
         columns=['Месторождение', 'Пласт', 'Район', 'Залежь', 'Средняя глубина залегания кровли',
                  'Абсолютная отметка ВНК', 'Абсолютная отметка ГНК',
-                 'Абсолютная отметка ГВК', 'Тип залежи', 'Тип коллектора', 'Площадь нефтеносности', 'Площадь газоносности',
+                 'Абсолютная отметка ГВК', 'Тип залежи', 'Тип коллектора', 'Площадь нефтеносности',
+                 'Площадь газоносности',
                  'Средняя общая толщина', 'Средняя эффективная нефтенасыщенная толщина',
                  'Средняя эффективная газонасыщенная толщина', 'Средняя эффективная водонасыщенная толщина',
                  'Коэффициент пористости', 'Коэффициент нефтенасыщенности ЧНЗ',
@@ -110,24 +114,29 @@ def parser(directory):
                  'Коэффициент вытеснения (водой)', 'Коэффициент вытеснения (газом)', 'Коэффициент продуктивности',
                  'Коэффициенты фильтрационных сопротивлений:', 'А', 'В'])
 
+    count = 0
     # перебираем файлы в папке
     for file in files:
+        count += 1
+        print(count)
         name = os.path.basename(file)
         print(file)
-        field = name.split('_')[0] # получение названия месторождения из заголовка
+        field = name.split('_')[0]  # получение названия месторождения из заголовка
 
         xl_file = pd.ExcelFile(str(name))
         # sheet_names = xl_file.sheet_names  # список страниц в файле
-        sheet_GFH = [sheet for sheet in list_sheet_GPH if sheet in xl_file.sheet_names][0] # поиск нужной страницы
+        sheet_GFH = [sheet for sheet in list_sheet_GPH if sheet in xl_file.sheet_names][0]  # поиск нужной страницы
 
         # считывание необходимой таблицы с необходимыми заголовками
         df_file = pd.read_excel(file, sheet_name=sheet_GFH, na_filter=False)
-        row_param, col_param = np.where((df_file == 'Параметры') | (df_file == 'Показатели')) # строка-столбец начала таблицы с необходимымы данными
+        row_param, col_param = np.where((df_file == 'Параметры') | (
+                df_file == 'Показатели'))  # строка-столбец начала таблицы с необходимыми данными
         dict_columns_copy = dict_columns.copy()
 
         # если есть разделение на купола выше строки "Параметры"/"Показатели"
         row_with_kupol = df_file.iloc[row_param[0] - 1:row_param[0], col_param[0]:]
         row_with_kupol = row_with_kupol.replace('', np.nan)
+        row_with_kupol = row_with_kupol.infer_objects(copy=False)
         if not row_with_kupol.dropna(how='all').empty:
             row_with_kupol_T = row_with_kupol.T
             row_with_kupol_T.reset_index(drop=True, inplace=True)
@@ -137,35 +146,34 @@ def parser(directory):
             else:
                 row_with_kupol_T = row_with_kupol_T[0:0]
 
-        df_file = df_file.iloc[row_param[0]:, col_param[0]:] # таблица без лишней шапки
+        df_file = df_file.iloc[row_param[0]:, col_param[0]:]  # таблица без лишней шапки
         df_file.reset_index(drop=True, inplace=True)
 
-        df_file = df_file.T # Транспонированная таблица
+        df_file = df_file.T  # Транспонированная таблица
         df_file.reset_index(drop=True, inplace=True)
         df_file.iloc[0] = df_file.iloc[0].apply(lambda x: x.strip() if isinstance(x, str) else x)  # удаление пробелов в начале и в конце в предполагаемой строке заголовков
 
-        if df_file.iloc[0][1] == "":
-            df_file.iloc[0][1] = 'Пласт'
-        if df_file.iloc[0][2] == "":
-            df_file.iloc[0][2] = 'Район'
-        if df_file.iloc[0][3] == "":
-            df_file.iloc[0][3] = 'Залежь'
+        if df_file.iloc[0, 1] == "":
+            df_file.iloc[0, 1] = 'Пласт'
+        if df_file.iloc[0, 2] == "":
+            df_file.iloc[0, 2] = 'Район'
+        if df_file.iloc[0, 3] == "":
+            df_file.iloc[0, 3] = 'Залежь'
 
-        df_file.columns = df_file.iloc[0] # присвоение строки заголовков
-        df_file = df_file.drop(0, axis=0) # удаление строки заголовков из самой таблицы
+        df_file.columns = df_file.iloc[0]  # присвоение строки заголовков
+        df_file = df_file.drop(0, axis=0)  # удаление строки заголовков из самой таблицы
 
         # Приведение заголовков к однотипным
-        for col_name, value in df_file.items():
+        for col_name in df_file.columns:
             Flag = 0
             if col_name:
                 for k, v in dict_columns_copy.items():
                     for type_col in v:
-                        if re.search(type_col, str(col_name)):
+                        if re.search(type_col, str(col_name), re.IGNORECASE):
                             # if str(type_col) in str(col_name):
                             df_file.rename(columns={str(col_name): str(k)}, inplace=True)
                             Flag = 1
                             del dict_columns_copy[k]
-                        if Flag == 1:
                             break
                     if Flag == 1:
                         break
@@ -178,15 +186,17 @@ def parser(directory):
 
         # удаление ненужных строк
         df_file = df_file.replace('', np.nan)
-        df_file = df_file.dropna(subset=['Средняя глубина залегания кровли', 'Абсолютная отметка ВНК', 'Площадь нефтеносности', 'Коэффициент пористости'], axis=0, how='all') # thresh=
+        df_file = df_file.infer_objects(copy=False)
+        df_file = df_file.dropna(subset=['Средняя глубина залегания кровли', 'Абсолютная отметка ВНК',
+                                         'Площадь нефтеносности', 'Коэффициент пористости'], axis=0, how='all')
         df_file = df_file[df_file['Средняя глубина залегания кровли'] != "м"]
 
-        df_file.insert(0, 'Месторождение', field) # вставка столбца с названием месторождения
-
-        df_file['Параметры'].replace(list_extra_words, np.nan, inplace=True) # удаление лишних слов в столбце
+        df_file.insert(0, 'Месторождение', field)  # вставка столбца с названием месторождения
+        df_file['Параметры'].replace(list_extra_words, np.nan, inplace=True)  # удаление лишних слов в столбце
 
         # меняем столбцы, чтобы для объектов было выделено 3 столбца
-        if not df_file['Параметры'].isnull().all() and ('Залежь' not in df_file.columns or df_file['Залежь'].isnull().all()):
+        if not df_file['Параметры'].isnull().all() and (
+                'Залежь' not in df_file.columns or df_file['Залежь'].isnull().all()):
             if 'Залежь' in df_file.columns:
                 df_file.drop('Залежь', axis=1, inplace=True)
             else:
@@ -194,34 +204,37 @@ def parser(directory):
                 df_file.rename(columns={'Пласт': 'Район'}, inplace=True)
                 df_file.rename(columns={'Параметры': 'Пласт'}, inplace=True)
 
-        # Если указан купол на строкой "Параметры"/"Показатели"
+        # Если указан купол над строкой "Параметры"/"Показатели"
         if not row_with_kupol.dropna(how='all').empty and not row_with_kupol_T.empty:
             df_file['купол'] = row_with_kupol_T
-            df_file['Район'] = np.where(((df_file['Район'] == "") | df_file['Район'].isna()), df_file['купол'], df_file['Район'])
+            df_file['Район'] = np.where(((df_file['Район'] == "") | df_file['Район'].isna()), df_file['купол'],
+                                        df_file['Район'])
             del df_file['купол']
 
-        # df = pd.concat([df, df_file]) # добавление страницы с таблицей в общую таблицу со всеми месторождениями из файла
+        # df = pd.concat([df, df_file])  # добавление страницы с таблицей в общую таблицу со всеми месторождениями из файла
         df = df._append(df_file, ignore_index=True)
 
     df['Пласт'] = df['Пласт'].fillna(method='ffill')
     df['Сцепка'] = df['Месторождение'] + "_" + df['Пласт']
 
-    # Если в ГФХ шапка 3х этажная
+    # Если в ГФХ шапка 3-х этажная
     if not df['Залежь'].empty:
         list_object_deposit = df[df['Залежь'].notna()]['Сцепка'].drop_duplicates().tolist()
         df['Пласт'] = np.where(df['Сцепка'].isin(list_object_deposit), df['Район'], df['Пласт'])
         df['Район'] = np.where(df['Сцепка'].isin(list_object_deposit), df['Залежь'], df['Район'])
-        df['Район'] = np.where((df['Сцепка'].isin(list_object_deposit) & df['Пласт'].str.contains('цел')), 'в целом', df['Район'])
+        df['Район'] = np.where((df['Сцепка'].isin(list_object_deposit) & df['Пласт'].str.contains('цел')), 'в целом',
+                               df['Район'])
         df['Район'] = np.where((df['Сцепка'].isin(list_object_deposit) & df['Район'].isna()), 'Залежь', df['Район'])
         df['Пласт'] = df['Пласт'].fillna(method='ffill')
-        df['Пласт'] = np.where(df['Пласт'].str.contains('цел'), df['Сцепка'].str.split('_', expand=True)[1], df['Пласт'])
+        df['Пласт'] = np.where(df['Пласт'].str.contains('цел'), df['Сцепка'].str.split('_', expand=True)[1],
+                               df['Пласт'])
 
     if 'Параметры' in df_file.columns:
         df = df.drop(['Параметры'], axis=1)
-
     df = df.drop(['Залежь', 'Сцепка'], axis=1)
 
     return df
+
 
 def extract_objects(df):
     """
@@ -229,9 +242,9 @@ def extract_objects(df):
     :param df: все собранные ГФХ в исходном виде в одной таблице
     :return: общая таблица с почищенными/извлеченными объектами и районами
     """
-
     # удаление слов пласт/объект
-    df['Пласт'] = df['Пласт'].replace(to_replace=[r'((.*\n*){1,2})пл\.\s*', r'.*ласт\s*', r'.бъект\s*'], value='', regex=True) # , r'.*\n*.*\,n*\s*'     r'.ласт\s*'   , r'.*пл.',    (.*\n*)(.+)(?:,)(\n*)
+    df['Пласт'] = df['Пласт'].replace(to_replace=[r'((.*\n*){1,2})пл\.\s*', r'.*ласт\s*', r'.бъект\s*'], value='',
+                                      regex=True)
     df['Временный столбец'] = df['Пласт'].copy()
 
     # Выделение пластов
@@ -240,19 +253,19 @@ def extract_objects(df):
     df['Пласт'] = df['Пласт'].str.replace(r'[\n\s]', '', regex=True)
 
     # Выделение районов
-    df['Временный столбец'] = df['Временный столбец'].str.replace(r'(^\s*[а-яА-Я]+\s*[0-9]*(?:[/\-|\+]*[\s]*[АаБбчЮ0-9]*)+)',"", regex=True)  # удаление лишних слов (пластов) в столбце
+    df['Временный столбец'] = (
+        df['Временный столбец'].str.replace(r'(^\s*[а-яА-Я]+\s*[0-9]*(?:[/\-|\+]*[\s]*[АаБбчЮ0-9]*)+)', "", regex=True))  # удаление лишних слов (пластов) в столбце
     df['Временный столбец'] = df['Временный столбец'].str.replace(r'^жное', 'Южное', regex=True)
     df['Временный столбец'] = df['Временный столбец'].str.replace(r', ', '', regex=True)
-    # '^\s*[а-яА-Я]+[\s]*[0-9]*[АаБб0-9/\-\+ ]+'
-    # '^\s*[а-яА-Я]+\s*[0-9]+([/\-|\+]*[а-яА-Я0-9]+)+'
+
     df['Район'] = df['Район'].astype(str)
     df['Район'] = df['Район'].str.replace("nan", str(''))
     df['Район'] = np.where(df['Район'] == '', df['Временный столбец'], df['Район'])
-    # df['Район'] = df['Район'].replace([r'^\(', r'\)$'], '', regex=True)
 
     del df['Временный столбец']
 
     return df
+
 
 def unifier(df, file_unifier):
     """
@@ -261,28 +274,47 @@ def unifier(df, file_unifier):
     :param file_unifier: эксель файл с унификатором
     :return: общая таблица с унифицированными названиями пластов и объектов
     """
-    sheets = ['Пласты_ПТД', 'Унификатор'] # Страницы с унификаторами
+    sheets = ['Унификатор_ПТД', 'Унификатор']  # Страницы с унификаторами
     columns = ['Пласт', 'Объект']
+    wb = load_workbook(file_unifier, data_only=True)
 
     for i in range(len(sheets)):
-        new_objects = pd.DataFrame() # датафрейм для новых объектов/пластов, которых нет в унификаторе
-        df_unifier = pd.read_excel(file_unifier, sheet_name=sheets[i])  # датафрейм унификатор
-        df_unifier = df_unifier.dropna(subset=['Месторождение\nУнифицированное название', 'Пласт\nУнифицированное название'])
-        num_row = df_unifier.shape[0] # количество строк с унифицированными объектами в унификаторе
+        new_objects = pd.DataFrame()  # датафрейм для новых объектов/пластов, которых нет в унификаторе
+        # df_unifier = pd.read_excel(file_unifier, sheet_name=sheets[i], engine="openpyxl")  # датафрейм унификатор
+        ws = wb[sheets[i]]
+        data = list(ws.values)
+
+        # Приводим первую строку к уникальным заголовкам
+        raw_columns = list(data[0])
+        columns_unifier = pd.Series(raw_columns)
+        columns_unifier = columns_unifier.where(~columns_unifier.duplicated(), columns_unifier + '\n' +
+                                                "Унифицированное название")
+
+        # Превратим в DataFrame, первая строка — заголовки
+        df_unifier = pd.DataFrame(data[1:], columns=columns_unifier)
+
+        df_unifier = df_unifier.dropna(
+            subset=['Месторождение\nУнифицированное название', 'Пласт\nУнифицированное название'])
+        num_row = df_unifier.shape[0]  # количество строк с унифицированными объектами в унификаторе
 
         df['Сцепка'] = df['Месторождение'] + "_" + df['Пласт']
-        print(list(df_unifier))
-
         # Унифицированное название месторождения
+        df = df.merge(df_unifier[['Сцепка', 'Месторождение\nУнифицированное название']],
+                      on='Сцепка',
+                      how='left')
         df['Месторождение'] = np.where(df['Сцепка'].isin(df_unifier['Сцепка']),
-                                     pd.merge(df, df_unifier[['Сцепка', 'Месторождение\nУнифицированное название']],
-                                              on='Сцепка', how='left')['Месторождение\nУнифицированное название'], df['Месторождение'])
-        # df['Сцепка'] = np.where(df['Сцепка'] == (df_unifier['Сцепка']), df_unifier['Месторождение\nУнифицированное название'], df['Месторождение'])
-        # Унифицированное название объекта
-        df[columns[i]] = np.where(df['Сцепка'].isin(df_unifier['Сцепка']),
-                                       pd.merge(df, df_unifier[['Сцепка', 'Пласт\nУнифицированное название']],
-                                                on='Сцепка', how='left')['Пласт\nУнифицированное название'], df['Пласт'])
+                                       df['Месторождение\nУнифицированное название'],
+                                       df['Месторождение'])
 
+        # Унифицированное название объекта
+        df = df.merge(df_unifier[['Сцепка', 'Пласт\nУнифицированное название']],
+                      on='Сцепка',
+                      how='left')
+
+        df[columns[i]] = np.where(df['Сцепка'].isin(df_unifier['Сцепка']),
+                                  df['Пласт\nУнифицированное название'], df['Пласт'])
+
+        df.drop(columns=['Месторождение\nУнифицированное название', 'Пласт\nУнифицированное название'], inplace=True)
         new_objects['Сцепка'] = df[~df['Сцепка'].isin(df_unifier['Сцепка'])]['Сцепка']
 
         # добавление новых объектов в унификатор, если они найдены
@@ -292,9 +324,9 @@ def unifier(df, file_unifier):
             # df_unifier = pd.concat([df_unifier, new_objects])
 
             with pd.ExcelWriter(file_unifier, mode='a', if_sheet_exists='overlay') as writer:
-                new_objects.to_excel(writer, sheet_name=sheets[i], index=False, header=False, startrow=num_row+1, startcol=1)
-
-    df.insert(1, 'Объект', df.pop('Объект')) # перемещение столбца
+                new_objects.to_excel(writer, sheet_name=sheets[i], index=False, header=False, startrow=num_row + 1,
+                                     startcol=1)
+    df.insert(1, 'Объект', df.pop('Объект'))  # перемещение столбца
     del df['Сцепка']
 
     return df
@@ -310,103 +342,123 @@ def clear_all_data(df):
     # разбиение площади нефтегазоносности на нефти и газ
     df['Площадь нефтегазоносности'] = df['Площадь нефтеносности'].copy()
 
-    if not df[df['Площадь нефтегазоносности'].astype(str).str.contains('/')].empty:
-        df['Площадь нефтеносности'] = np.where(df['Площадь нефтегазоносности'].str.contains('/') == True,
-                 df['Площадь нефтегазоносности'].str.split('/', expand=True)[0], df['Площадь нефтеносности'])
-        df['Площадь газоносности'] = np.where(df['Площадь нефтегазоносности'].str.contains('/') == True,
-                 df['Площадь нефтегазоносности'].str.split('/', expand=True)[1], np.nan)
+    # Маска для строк, где есть '/'
+    mask = df['Площадь нефтегазоносности'].astype(str).str.contains('/')
+    # Обновляем только нужные строки
+    if mask.any():
+        df.loc[mask, 'Площадь нефтеносности'] = df.loc[mask, 'Площадь нефтегазоносности'].str.split('/', expand=True)[0]
+        df.loc[mask, 'Площадь газоносности'] = df.loc[mask, 'Площадь нефтегазоносности'].str.split('/', expand=True)[1]
 
-        # df['Площадь нефтеносности'] = df['Площадь нефтегазоносности'].str.extract(r'(^\d+)', expand=True)
-        # df['Площадь газоносности'] = df['Площадь нефтегазоносности'].str.extract(r'(\d+$)', expand=True)
-        # df.insert(11, 'Площадь нефтеносности', df.pop('Площадь нефтеносности'))
-        # df.insert(12, 'Площадь газоносности', df.pop('Площадь газоносности'))
-        # df.drop('Площадь нефтегазоносности', axis=1, inplace=True)
+    # df['Площадь нефтеносности'] = df['Площадь нефтегазоносности'].str.extract(r'(^\d+)', expand=True)
+    # df['Площадь газоносности'] = df['Площадь нефтегазоносности'].str.extract(r'(\d+$)', expand=True)
+    # df.insert(11, 'Площадь нефтеносности', df.pop('Площадь нефтеносности'))
+    # df.insert(12, 'Площадь газоносности', df.pop('Площадь газоносности'))
+    # df.drop('Площадь нефтегазоносности', axis=1, inplace=True)
 
     # на случай, если в площади нефтеносности изначально указано одно число и оно относится к газоносности
-    df['Площадь газоносности'] = np.where(((df['Площадь газоносности'] == "") | df['Площадь газоносности'].isna()) &
-                                          ((df['Коэффициент газонасыщенности пласта'] != "") | (df['Коэффициент газонасыщенности пласта'].notna())) &
-                                          ((df['Коэффициент нефтенасыщенности пласта'] == "") | df['Коэффициент нефтенасыщенности пласта'].isna() | (df['Коэффициент нефтенасыщенности пласта'] == "-")),
-                                          df['Площадь нефтеносности'], df['Площадь газоносности'])
-    df['Площадь нефтеносности'] = np.where(((df['Площадь газоносности'] != "") | (df['Площадь газоносности'].notna())) &
-                                          ((df['Коэффициент газонасыщенности пласта'] != "") | (df['Коэффициент газонасыщенности пласта'].notna())) &
-                                          ((df['Коэффициент нефтенасыщенности пласта'] == "") | df['Коэффициент нефтенасыщенности пласта'].isna() | (df['Коэффициент нефтенасыщенности пласта'] == "-")),
-                                          np.nan, df['Площадь нефтеносности'])
+    mask_gas = (((df['Площадь газоносности'].astype(str).str.strip().isin(['', '-'])) |
+                 df['Площадь газоносности'].isna()) &
+                ((df['Коэффициент газонасыщенности пласта'].astype(str).str.strip().ne('')) |
+                 (df['Коэффициент газонасыщенности пласта'].notna())) &
+                ((df['Коэффициент нефтенасыщенности пласта'].astype(str).str.strip().isin(['', '-'])) |
+                 df['Коэффициент нефтенасыщенности пласта'].isna()))
+    df.loc[mask_gas, 'Площадь газоносности'] = df.loc[mask_gas, 'Площадь нефтеносности']
+    mask_oil = (((df['Площадь газоносности'].astype(str).str.strip().ne('')) |
+                 df['Площадь газоносности'].isna() |
+                 (df['Площадь газоносности'].astype(str).str.strip().ne('-'))) &
+                ((df['Коэффициент газонасыщенности пласта'].astype(str).str.strip().ne('')) |
+                 (df['Коэффициент газонасыщенности пласта'].notna()) |
+                 (df['Коэффициент газонасыщенности пласта'].astype(str).str.strip().ne('-'))) &
+                ((df['Коэффициент нефтенасыщенности пласта'].astype(str).str.strip().eq('')) |
+                 df['Коэффициент нефтенасыщенности пласта'].isna() |
+                 (df['Коэффициент нефтенасыщенности пласта'].astype(str).str.strip().eq('-'))))
+    df.loc[mask_oil, 'Площадь нефтеносности'] = np.nan
 
     # очищение данных - одинаковые разделители, лишние слова, символы
     df['Тип залежи'] = df['Тип залежи'].replace({' и ': ', ', '-': '', ',': ', '}, regex=True)
-    dict_type_res = {'[Пп]+ласт[а-я]*\.*\s*': 'П', '[Лл]+ит[а-я]*\.*\s*': 'Л', '[Оо]+гр[а-я]*\.*\s*': 'О', '[Ээ]+кр[а-я]*\.*\s*': 'Э',  '[Тт]+ек[а-я]*\.*\s*': 'Т',
-                     '[Сс]+во[а-я]*\.*\s*': 'С', '[Сс]+тра[а-я]*\.*\s*': 'Ст', '[Сс]+тру[а-я]*\.*\s*': 'Структурная ', '[Мм]+ас[а-я]*\.*\s*': 'М', '\s{2,3}': ' ', 'M': 'М', 'C': 'С', 'пл\.\s*': 'П', 'линза': ' линза'}
+    dict_type_res = {'[Пп]+ласт[а-я]*\.*\s*': 'П', '[Лл]+ит[а-я]*\.*\s*': 'Л', '[Оо]+гр[а-я]*\.*\s*': 'О',
+                     '[Ээ]+кр[а-я]*\.*\s*': 'Э', '[Тт]+ек[а-я]*\.*\s*': 'Т',
+                     '[Сс]+во[а-я]*\.*\s*': 'С', '[Сс]+тра[а-я]*\.*\s*': 'Ст', '[Сс]+тру[а-я]*\.*\s*': 'Структурная ',
+                     '[Мм]+ас[а-я]*\.*\s*': 'М', '\s{2,3}': ' ', 'M': 'М', 'C': 'С', 'пл\.\s*': 'П', 'линза': ' линза'}
     df['Тип залежи'] = df['Тип залежи'].replace(dict_type_res, regex=True)
     df = df.replace(',', '.', regex=True)
-    df = df.replace(['-', ' -', '- '], '') # ' -', regex
-    df.iloc[:, 4:] = df.iloc[:, 4:].replace('\s*[±+][/]*[-]*\s*\d*\.*\d*', '', regex=True) # удаление приблизительных значений с ±/+
+    df = df.replace(['-', ' -', '- '], '')
+    df.iloc[:, 4:] = df.iloc[:, 4:].replace(r'\s*[±+][/]*[-]*\s*\d*\.*\d*', '', regex=True)  # удаление приблизительных значений с ±/+
     df = df.replace(0, '')
-    df = df.replace('0.002*10-3', 0.000002) # встретилось одно дурацкое число
-    df = df.replace('.*цел.*', '', regex=True) # 'в целом' - было
-    df = df.replace(['\*', 'нет ГИС', '- / ', ' / -'], '', regex=True)
-    df = df.replace(['\*', 'нет ГИС', '- / ', ' / -'], '', regex=True)
+    df = df.replace('0.002*10-3', 0.000002)  # встретилось одно дурацкое число
+    df = df.replace('.*цел.*', '', regex=True)  # 'в целом' - было
+    df = df.replace([r'\*', r'нет ГИС', r'- / ', r' / - *$'], '', regex=True)
 
-    dict_type_res = {'^тер[а-я]*\.*$': 'терригенный', '^[А-Яа-я]+[-\s\.\n]+[А-Яа-я]+$': 'терригенно-поровый', '^[А-Яа-я]*овый$': 'поровый'}
+    dict_type_res = {'^тер[а-я]*\.*$': 'терригенный', '^[А-Яа-я]+[-\s\.\n]+[А-Яа-я]+$': 'терригенно-поровый',
+                     '^[А-Яа-я]*овый$': 'поровый'}
     df['Тип коллектора'] = df['Тип коллектора'].replace(dict_type_res, regex=True)
 
     df.iloc[:, 4:] = df.iloc[:, 4:].replace(['÷', '/', ';'], '-', regex=True)
-    df.iloc[:, 4:8] = df.iloc[:, 4:8].replace(['^н\D+', '\n'], '', regex=True)
-    df.iloc[:, 12:54] = df.iloc[:, 12:54].replace(['^н\D+', '^о\D+'] , '', regex=True)
+    df.iloc[:, 4:8] = df.iloc[:, 4:8].replace(['^н\D+', '\n'], '-', regex=True)
+    df.iloc[:, 12:54] = df.iloc[:, 12:54].replace(['^н\D+', '^о\D+'], '', regex=True)
     # df = df.applymap(lambda x: x.strip())
-
-    t0 = time.time()
+    df = df.infer_objects(copy=False)
 
     # функция для разбиения диапазона чисел и получения усредненного значения
     def split_mean(x):
-        if isinstance(x, str) and '-' in x: #' / '
+        if isinstance(x, str) and '-' in x:  # ' / '
             list_x = x.split('-')
             value = np.mean(list(map(float, list_x)))
             return value
         return x
 
-    df.iloc[:, 12:54] = df.iloc[:, 12:54].applymap(split_mean) # должно быть 54!!!
+    df.iloc[:, 12:54] = df.iloc[:, 12:54].applymap(split_mean)  # должно быть 54!!!
 
     # df.iloc[:, 24] = df.iloc[:, 24].apply(lambda x: np.mean([int(x.split('-')[0]), int(x.split('-')[1])]) if isinstance(x, str) and '-' in x else x)
     # df.iloc[:, 24] = np.where(df.iloc[:, 24].str.contains('-') == True, df.iloc[:, 24].str.split('-', expand=True).astype('float').mean(axis=1), df.iloc[:, 24])
-
     # df['Начальная пластовая температура'].apply(lambda x: x.split('-')[0])
 
-    # функция для разбиения диапазона чисел (глубин) и получения минимального  значения
+    # функция для разбиения диапазона чисел (глубин) и получения минимального значения
     def split_top(x):
-        if isinstance(x, str) and '-' in x: #' / '
-            list_x = x.strip().split('-')
-            list_x[:] = [x.strip().replace(' ', '') for x in list_x if x]
-            value = min(list(map(float, list_x)))
-            return value
+        if isinstance(x, str):  # and '-' in x:  #' / '
+            cleaned = re.sub(r'\s{2,}', '-', x.strip())
+            list_x = [s.replace(' ', '') for s in cleaned.split('-') if s.strip()]
+            if len(list_x) > 0:
+                value = min(list(map(float, list_x)))
+                return value
+            return x
         return x
 
     df.iloc[:, 4:8] = df.iloc[:, 4:8].applymap(split_top)
 
     df = df.replace(['-', ' -', '- '], '')
     df = df.replace(['', ' '], np.nan)
-    df = df.replace(['^\s+', '\s+$'] , '', regex=True) # удаление пробелов в начале и в конце (через strip не получилось из-за разных типов данных)
+    df = df.replace(['^\s+', '\s+$'], '', regex=True)  # удаление пробелов в начале и в конце (ч/з strip не получилось из-за разных типов)
 
-    # df.iloc[:, 5:9].apply(lambda x: x.astype('float'))
     df.iloc[:, 4:8] = df.iloc[:, 4:8].apply(pd.to_numeric)
-    df.iloc[:, 10:54] = df.iloc[:, 10:54].apply(pd.to_numeric) # должно быть 54!!!
+    df.iloc[:, 10:54] = df.iloc[:, 10:54].apply(pd.to_numeric)  # должно быть 54!!!
 
-    # чтобы все глубины были положительньые
+    # чтобы все глубины были положительные
     for i in range(4, 8):
         df.iloc[:, i] = np.where(df.iloc[:, i] < 0, df.iloc[:, i] * (-1), df.iloc[:, i])
 
-    t1 = time.time()
-    total_n = t1 - t0
-    print(total_n)
-
-    # приведение параметров (плотность и проницаемость к одной размерности)
-    list_columns_dimension = ['Плотность нефти в пластовых условиях', 'Плотность нефти в поверхностных условиях', 'Плотность газа в пластовых условиях', 'Плотность воды в поверхностных условиях']
-    for col in list_columns_dimension:
+    # приведение параметров (плотность и проницаемость, объемник к одной размерности, сжимаемость)
+    list_columns_density = ['Плотность нефти в пластовых условиях', 'Плотность нефти в поверхностных условиях',
+                            'Плотность газа в пластовых условиях', 'Плотность воды в поверхностных условиях']
+    for col in list_columns_density:
         df[col] = np.where(df[col] > 2, df[col] / 1000, df[col])
         df[col] = np.where(df[col] < 0.1, df[col] * 1000, df[col])
 
     list_field_perm_mD = df.loc[df['Проницаемость'] > 2, 'Месторождение'].drop_duplicates().tolist()
-    df['Проницаемость'] = np.where(df['Месторождение'].isin(list_field_perm_mD), df['Проницаемость'] / 1000, df['Проницаемость'])
+    df['Проницаемость'] = np.where(df['Месторождение'].isin(list_field_perm_mD), df['Проницаемость'] / 1000,
+                                   df['Проницаемость'])
     df['Проницаемость'] = df['Проницаемость'] * 1000
+
+    df["Объемный коэффициент нефти"] = np.where(df["Объемный коэффициент нефти"] > 5,
+                                                df["Объемный коэффициент нефти"] / 1000,
+                                                df["Объемный коэффициент нефти"])
+    df["Объемный коэффициент нефти"] = np.where(df["Объемный коэффициент нефти"] < 1,
+                                                df["Объемный коэффициент нефти"] + 1, df["Объемный коэффициент нефти"])
+
+    list_columns_compressibility = ['нефти', 'воды', 'породы']
+    for col in list_columns_compressibility:
+        df[col] = np.where(df[col] < 0.1, df[col] * 100, df[col])
+        df[col] = np.where(df[col] < 1, df[col] * 10, df[col])
 
     del df['Площадь нефтегазоносности']
 
@@ -419,11 +471,9 @@ def add_total_row(df):
     :param df: все данные ГФХ с очищенными данными
     :return: таблица со строкой "в целом" для всех объектов
     """
-
     list_field = df['Месторождение'].unique()
     df['Район'] = df['Район'].replace('в целом', '')
     df['Сцепка'] = df['Месторождение'] + "_" + df['Объект']
-    # df['Сцепка объект-пласт'] = df['Месторождение'] + "_" + df['Объект'] + "_" + df['Пласт']
     df[['Тип залежи', 'Тип коллектора', 'Район']] = df[['Тип залежи', 'Тип коллектора', 'Район']].fillna('')
     df.iloc[:, 10:54] = df.iloc[:, 10:54].fillna(0)
 
@@ -432,139 +482,96 @@ def add_total_row(df):
     df['count_res'] = df.groupby(['Месторождение', 'Объект', 'Пласт'])['Месторождение'].transform('count')
     df['Тип данных'] = np.where(df['count_obj'] == 1, 'в целом', '')
     df['Тип данных'] = np.where(((df['Тип данных'] == '') & df['Район'].str.contains(r'.+')), 'район', df['Тип данных'])
-    df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_obj'] == df['count_res'])), 'в целом', df['Тип данных'])
+    df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_obj'] == df['count_res'])), 'в целом',
+                                df['Тип данных'])
     df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_res'] > 1)), 'промежуточные', df['Тип данных'])
     df['count_obj_new'] = df.groupby(['Месторождение', 'Объект', 'Тип данных'])['Месторождение'].transform('count')
-    df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_res'] == 1) & (df['count_obj_new'] == 1)), 'в целом', df['Тип данных'])
-    df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_res'] == 1) & (df['count_obj_new'] > 1)), 'район', df['Тип данных'])
+    df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_res'] == 1) & (df['count_obj_new'] == 1)),
+                                'в целом', df['Тип данных'])
+    df['Тип данных'] = np.where(((df['Тип данных'] == '') & (df['count_res'] == 1) & (df['count_obj_new'] > 1)),
+                                'район', df['Тип данных'])
 
-
-    list_object_whole = df[df['Тип данных'] == 'в целом']['Сцепка'].drop_duplicates().tolist() # объекты, у которых есть строка "в целом" - для них не нужно считать средневзвешенные параметры
-    df_for_group = df[~df['Сцепка'].isin(list_object_whole)] # таблица с объектами без строки "в целом"
+    list_object_whole_without_tick = df[
+        (df['Тип данных'] == 'в целом') & (df['Средняя эффективная нефтенасыщенная толщина'] == 0) & (
+                df['Средняя эффективная газонасыщенная толщина'] == 0)][
+        'Сцепка'].index.tolist()  # объекты, у которых нет ННТ и ГНТ в строчке "в целом"
+    df = df.drop(index=list_object_whole_without_tick)
+    list_object_whole = df[df['Тип данных'] == 'в целом'][
+        'Сцепка'].drop_duplicates().tolist()  # объекты, у которых есть строка "в целом" - для них не нужно считать средневзвешенные параметры
+    df_for_group = df[~df['Сцепка'].isin(list_object_whole)]  # таблица с объектами без строки "в целом"
     df_for_group = df_for_group[df_for_group['Тип данных'] == 'район']
 
-    # df_one_reservoir = df[df.groupby(["Месторождение", "Объект"])[["Месторождение", "Объект"]].transform('size') == 1]
-    # df_more_reservoir = df[df.groupby(["Месторождение", "Объект"])[["Месторождение", "Объект"]].transform('size') > 1]
+    def f(x):
+        area_oil = df_for_group.loc[x.index, 'Площадь нефтеносности']
+        h_oil = df_for_group.loc[x.index, 'Средняя эффективная нефтенасыщенная толщина']
+        area_gas = df_for_group.loc[x.index, 'Площадь газоносности']
+        h_gas = df_for_group.loc[x.index, 'Средняя эффективная газонасыщенная толщина']
 
-    # расчет средвневзвешенных по объему параметров
-    f = lambda x: sum((df_for_group.loc[x.index]['Площадь нефтеносности'] * df_for_group.loc[x.index]['Средняя эффективная нефтенасыщенная толщина'] +
-                       df_for_group.loc[x.index]['Площадь газоносности'] * df_for_group.loc[x.index]['Средняя эффективная газонасыщенная толщина']) * x) / \
-                  sum(df_for_group.loc[x.index]['Площадь нефтеносности'] * df_for_group.loc[x.index]['Средняя эффективная нефтенасыщенная толщина'] +
-                       df_for_group.loc[x.index]['Площадь газоносности'] * df_for_group.loc[x.index]['Средняя эффективная газонасыщенная толщина'])
+        weight = area_oil * h_oil + area_gas * h_gas
+        value = x
+
+        # Исключаем: нулевой вес, значение NaN или значение == 0
+        mask = (weight > 0) & value.notna() & (value != 0)
+
+        weight_valid = weight[mask]
+        value_valid = value[mask]
+
+        if weight_valid.sum() == 0:
+            return np.nan
+
+        return (weight_valid * value_valid).sum() / weight_valid.sum()
+
     # остальные функции для группировки
     a = lambda x: r'в целом'
     b = lambda x: np.nan
     c = lambda x: ', '.join(filter(None, x.unique()))
 
-    # # dict_agg = {'Тип данных': lambda x: r'в целом',
-    #             'Пласт': lambda x: np.nan,
-    #             'Район': lambda x: np.nan,
-    #             'Средняя глубина залегания кровли': 'min', #lambda x: f'{x.min()}'+'-'+f'{x.max()}' if x.min() != x.max() and not np.isnan(x.min()) else x.min(),
-    #             'Абсолютная отметка ВНК': 'min', #lambda x: f'{x.min()}'+'-'+f'{x.max()}' if x.min() != x.max() and not np.isnan(x.min())  else x.min(), # lambda x: f'{x.min()}'+'-'+f'{x.max()}' if x.min() != x.max() else x.min()
-    #             'Абсолютная отметка ГНК': 'min', #lambda x: f'{x.min()}'+'-'+f'{x.max()}' if x.min() != x.max() and not np.isnan(x.min()) else x.min(),
-    #             'Абсолютная отметка ГВК': 'min', #lambda x: f'{x.min()}'+'-'+f'{x.max()}' if x.min() != x.max() and not np.isnan(x.min()) else x.min(),
-    #             'Тип залежи': lambda x: ', '.join(x.unique()) ,
-    #             'Тип коллектора': lambda x: ', '.join(x.unique()),
-    #             'Площадь нефтеносности': 'sum',
-    #             'Площадь газоносности': 'sum',
-    #             'Средняя общая толщина': f,  #lambda x: sum(df_need.loc[x.index]['Площадь нефтеносности'] * x) / sum(df_need.loc[x.index]['Площадь нефтеносности']),
-    #             'Средняя эффективная нефтенасыщенная толщина': f,
-    #             'Средняя эффективная газонасыщенная толщина': f,
-    #             'Средняя эффективная водонасыщенная толщина': f,
-    #             'Коэффициент пористости': f,
-    #             'Коэффициент нефтенасыщенности ЧНЗ': f,
-    #             'Коэффициент нефтенасыщенности ВНЗ': f,
-    #             'Коэффициент нефтенасыщенности пласта': f,
-    #             'Коэффициент газонасыщенности пласта': f,
-    #             'Проницаемость': f,
-    #             'Коэффициент песчанистости': f,
-    #             'Расчлененность': f,
-    #             'Начальная пластовая температура': f,
-    #             'Начальное пластовое давление': f,
-    #             'Вязкость нефти в пластовых условиях': f,
-    #             'Плотность нефти в пластовых условиях': f,
-    #             'Плотность нефти в поверхностных условиях': f,
-    #             'Объемный коэффициент нефти': f,
-    #             'Содержание серы в нефти': f,
-    #             'Содержание парафина в нефти': f,
-    #             'Давление насыщения нефти газом': f,
-    #             'Газосодержание': f,
-    #             'Давление начала конденсации': f,
-    #             'Плотность конденсата в стандартных условиях': f,
-    #             'Вязкость конденсата в стандартных условиях': f,
-    #             'Потенциальное содержание стабильного конденсата в газе (С5+)': f,
-    #             'Содержание сероводорода': f,
-    #             'Вязкость газа в пластовых условиях': f,
-    #             'Плотность газа в пластовых условиях': f,
-    #             'Коэффициент сверхсжимаемости газа': f,
-    #             'Вязкость воды в пластовых условиях': f,
-    #             'Плотность воды в поверхностных условиях': f,
-    #             'Сжимаемость': f,
-    #             'нефти': f,
-    #             'воды': f,
-    #             'породы': f,
-    #             'Коэффициент вытеснения (водой)': f,
-    #             'Коэффициент вытеснения (газом)': f,
-    #             'Коэффициент продуктивности': f,
-    #             'Коэффициенты фильтрационных сопротивлений:': f,
-    #             'А': f,
-    #             'В': f,
-    #             'Сцепка': 'count'}
-
     # строки по видам функции группировки и агрегации
     whole = ['Тип данных']
     nan = ['Пласт', 'Район']
     text = ['Тип залежи', 'Тип коллектора']
-    min_cols = ['Средняя глубина залегания кровли', 'Абсолютная отметка ВНК', 'Абсолютная отметка ГНК', 'Абсолютная отметка ГВК']
+    min_cols = ['Средняя глубина залегания кровли', 'Абсолютная отметка ВНК', 'Абсолютная отметка ГНК',
+                'Абсолютная отметка ГВК']
     sum_cols = ['Площадь нефтеносности', 'Площадь газоносности']
-    f_cols = ['Средняя общая толщина', 'Средняя общая толщина', 'Средняя эффективная нефтенасыщенная толщина', 'Средняя эффективная газонасыщенная толщина',
-                'Средняя эффективная водонасыщенная толщина', 'Коэффициент пористости', 'Коэффициент нефтенасыщенности ЧНЗ', 'Коэффициент нефтенасыщенности ВНЗ',
-                'Коэффициент нефтенасыщенности пласта', 'Коэффициент газонасыщенности пласта', 'Проницаемость', 'Коэффициент песчанистости', 'Расчлененность',
-                'Начальная пластовая температура', 'Начальное пластовое давление', 'Вязкость нефти в пластовых условиях', 'Плотность нефти в пластовых условиях',
-                'Плотность нефти в поверхностных условиях', 'Объемный коэффициент нефти', 'Содержание серы в нефти', 'Содержание парафина в нефти',
-                'Давление насыщения нефти газом', 'Газосодержание', 'Давление начала конденсации', 'Плотность конденсата в стандартных условиях',
-                'Вязкость конденсата в стандартных условиях', 'Потенциальное содержание стабильного конденсата в газе (С5+)',
-                'Содержание сероводорода', 'Вязкость газа в пластовых условиях', 'Плотность газа в пластовых условиях', 'Коэффициент сверхсжимаемости газа',
-                'Вязкость воды в пластовых условиях', 'Плотность воды в поверхностных условиях',
-                'Сжимаемость', 'нефти', 'воды', 'породы', 'Коэффициент вытеснения (водой)', 'Коэффициент вытеснения (газом)',
-                'Коэффициент продуктивности', 'Коэффициенты фильтрационных сопротивлений:', 'А', 'В']
+    f_cols = ['Средняя общая толщина', 'Средняя общая толщина', 'Средняя эффективная нефтенасыщенная толщина',
+              'Средняя эффективная газонасыщенная толщина',
+              'Средняя эффективная водонасыщенная толщина', 'Коэффициент пористости',
+              'Коэффициент нефтенасыщенности ЧНЗ', 'Коэффициент нефтенасыщенности ВНЗ',
+              'Коэффициент нефтенасыщенности пласта', 'Коэффициент газонасыщенности пласта', 'Проницаемость',
+              'Коэффициент песчанистости', 'Расчлененность',
+              'Начальная пластовая температура', 'Начальное пластовое давление', 'Вязкость нефти в пластовых условиях',
+              'Плотность нефти в пластовых условиях',
+              'Плотность нефти в поверхностных условиях', 'Объемный коэффициент нефти', 'Содержание серы в нефти',
+              'Содержание парафина в нефти',
+              'Давление насыщения нефти газом', 'Газосодержание', 'Давление начала конденсации',
+              'Плотность конденсата в стандартных условиях',
+              'Вязкость конденсата в стандартных условиях',
+              'Потенциальное содержание стабильного конденсата в газе (С5+)',
+              'Содержание сероводорода', 'Вязкость газа в пластовых условиях', 'Плотность газа в пластовых условиях',
+              'Коэффициент сверхсжимаемости газа',
+              'Вязкость воды в пластовых условиях', 'Плотность воды в поверхностных условиях',
+              'Сжимаемость', 'нефти', 'воды', 'породы', 'Коэффициент вытеснения (водой)',
+              'Коэффициент вытеснения (газом)',
+              'Коэффициент продуктивности', 'Коэффициенты фильтрационных сопротивлений:', 'А', 'В']
     count_cols = ['Сцепка']
-    dict_agg = {**{v: a for v in whole}, **{v: b for v in nan},  **{v: c for v in text}, **{v: 'min' for v in min_cols}, **{v: 'sum' for v in sum_cols}, **{v: f for v in f_cols}, **{v: 'count' for v in count_cols}}
+    dict_agg = {**{v: a for v in whole},
+                **{v: b for v in nan},
+                **{v: c for v in text},
+                **{v: 'min' for v in min_cols},
+                **{v: 'sum' for v in sum_cols},
+                **{v: f for v in f_cols},
+                **{v: 'count' for v in count_cols}}
     # получение строк "в целом"
     df_for_group = df_for_group.groupby(["Месторождение", "Объект"], as_index=False).agg(dict_agg)
-
-    # t1 = time.time()
-    # total_n = t1 - t0
 
     # df = df._append(df_for_group, ignore_index=True)
     df = pd.concat([df, df_for_group], ignore_index=True)
 
-    df = df.drop(['Сцепка', 'count_obj', 'count_res', 'count_obj_new'], axis=1) # удаление лишних столбцов
+    df = df.drop(['Сцепка', 'count_obj', 'count_res', 'count_obj_new'], axis=1)  # удаление лишних столбцов
     df.insert(1, 'Тип данных', df.pop('Тип данных'))  # перемещение столбца
     df.index.name = 'MyIdx'
-    df = df.sort_values(by=['Месторождение', 'Объект', 'MyIdx'], ascending=[True, True, True]) # сортировка
+    df = df.sort_values(by=['Месторождение', 'Объект', 'MyIdx'], ascending=[True, True, True])  # сортировка
     df = df.replace(0, np.nan)
+    df = df.infer_objects(copy=False)
 
     return df
-
-
-
-# Для меня
-# VNK = df_file.index[df_file.iloc[:, col_param[0]].str.contains('ВНК') == True].tolist()
-
-# df_file = df_file.drop(np.where(df_file.iloc[:, col_param[0]].str.contains('воды в пласт') == True)[0])
-
-# # a = df_file.iloc[0].values[col_param[0]]
-# if len(VNK) > 0 and VNK[0] > 4:
-#     VNK_value = df_file[VNK[0]]
-#     df_file = df_file.drop(VNK[0], axis=1)
-#     df_file.insert(4, 'ВНК', VNK_value)
-#
-# # if df_file.iloc[col_param[0]][3]  == "Тип залежи":
-#     # df_file.insert(4, 'ВНК', np.nan)
-
-# num_row = df_file.shape[1]
-# df_file.columns = [col for col in range(0, num_row)]
-
-# if df_file.shape[1] > 53:
-#     df_file.drop(df_file.columns[53:], axis=1, inplace=True)

@@ -1,15 +1,12 @@
 import pandas as pd
-import glob
 import os
-import re
 import numpy as np
-import datetime as dt
-import math
+
 from function import parser, extract_objects, unifier, clear_all_data, add_total_row
 
-directory = r'C:\Users\Alina\Desktop\Работа\Попластовый план\Протоколы ПТД'
+directory = r'C:\Users\Alina\Desktop\Python\!Работа IT ННГ\GFH\Протоколы ПТД 2025'
 
-file_unifier = r'C:\Users\Alina\Desktop\Работа\Попластовый план\Унификатор.xlsx'
+file_unifier = r'C:\Users\Alina\Desktop\Работа\Попластовый план\Унификатор_15.05.2024.xlsx'
 
 if os.path.exists(directory + r'\all.xlsx'):
     os.remove(directory + r'\all.xlsx')
@@ -43,8 +40,8 @@ df = clear_all_data(df)
 df = add_total_row(df)
 df_empty_row = pd.DataFrame([[np.nan] * len(df.columns)], columns=df.columns)
 df = df_empty_row._append(df, ignore_index=True)
-df.iloc[0] = dimention
+# df.iloc[0] = dimention
+df.drop(df.index[0], inplace=True)
+df.columns = name_columns
 
-# df.columns = name_columns
-
-df.to_excel(directory + r'\all.xlsx', index=False)
+df.to_excel(directory + r'\all.xlsx', sheet_name='ГФХ', index=True)
